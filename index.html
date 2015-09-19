@@ -1,0 +1,389 @@
+<!--Field of Play Coordinates for Melbourne CBD:
+	{lat: -37.813226, lng: 144.951359}, /*(La Trobe and Spencer, Northwest corner)*/
+	{lat: -37.807569, lng: 144.970618}, /*(La Trobe and Victoria, Northeast corner 1)*/
+	{lat: -37.807861, lng: 144.971444}, /*(Spring and Victoria, Northeast corner 2)*/
+	{lat: -37.815274, lng: 144.974877}, /*(Spring and Flinders, Southeast corner)*/
+	{lat: -37.820973, lng: 144.955040} /*(Spencer and Flinders, Southwest corner)*/
+
+	goalOne = new google.maps.LatLng(-37.817219, 144.952797); /*(Top of Southern Cross Station Staircase, Western goal)*/
+	goalTwo = new google.maps.LatLng(-37.811226, 144.973603); /*(Top of Parliament House Staircase, Eastern goal)*/
+	ballposition = new google.maps.LatLng(-37.814278, 144.963257); /*(Elizabeth and Bourke, roughly centre of field)*/
+
+
+Field of play Coordinates for Bacchus Marsh:
+	{lat: -37.638183, lng: 144.408037 }, /*(Northwest corner)*/
+	{lat: -37.638183, lng: 144.456446 }, /*(Northeast corner)*/
+	{lat: -37.691459, lng: 144.456446 }, /*(Southeast corner)*/
+	{lat: -37.691459, lng: 144.408037 }  /*(Southwest corner)*/
+	
+	goalOne = new google.maps.LatLng(-37.638183, 144.432242 /*Centre of Northern Border*/);
+	goalTwo = new google.maps.LatLng(-37.691459, 144.432242 /*Centre of Southern Border*/);
+	ballPosition = new google.maps.LatLng(-37.672576, 144.436561 /* Gisborne Road and Lerderderg St */);
+
+-->
+
+<!-- Things to consider/be implemented:
+	A player's "movement line" is the line between two points: the player's current position, and
+		the player's position at the last time of asking (nominally one second ago).
+	
+	>If the ball is live (and therefore stationary) a player picks it up by running to/past it;
+		therefore the player's movement line must cross (with approximately 1 metre
+		leeway) the point of the ball.
+	>If a player has the ball, an opposing player can dispossess them by crossing their movement
+		line with the other player's. The two players need not have reached the intersection of this
+		point at exactly the same time; effectively this gives a margin for the opposing player to reach
+		of (time between location updates * movement speed of ball carrier); an update interval of 1 second
+		and a jogging ball carrier would produce a margin of approximately 2.5 metres.
+	>If the player with the ball leaves the boundary polygon, the ball becomes live at the
+		intersection of the player's movement line and the boundary line.
+	>The player with the ball has the option to "pass" the ball to a teammate; if they choose to,
+		they are given a list of teammates and their distance from the ball carrier. The closer a 
+		teammate is, the more likely it is that the pass will successfully find the teammate; if it doesn't,
+		the ball is placed at a random point between the two players, and becomes live.
+	
+	Things to do/check every time the update interval lapses:
+		>
+		>Obviously, have any players changed their locations? Move their markers,
+			as well as that of the ball if it's in possession.
+		
+		>Have any players left the webpage?
+		>Has the player with the ball reached the goal?
+		>Has the player with the ball left the field of play?
+		>Has any player's movement line intersected with the ball carrier's?
+		
+-->
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <style type="text/css">
+      html, body { height: 100%; margin: 0; padding: 0; }
+	  #text { height: 20%; }
+      #map { height: 80%; }
+    </style>
+	<link rel="stylesheet" type="text/css" href="mobfootball.css">
+  </head>
+  <body>
+	<div class="outer" id="text">
+		<div class="inner" id="textInner">
+			<p class="header">Welcome to the game!</p>
+		</div>
+	</div>
+    <div id="map"></div>
+    <script type="text/javascript" src="//d1l4stvdmqmdzl.cloudfront.net/3.9.6/mongoose.js">
+		var map;
+		var text;
+		
+		
+		var playerSchema = new mongoose.Schema({
+			id: Number,
+			hasPossession: Boolean,
+			latitude: Number,
+			longitude: Number,
+			name: String
+		});
+		
+		
+		// define latlng coordinates for field of play
+		var fieldOfPlay = [
+			{lat: -37.813226, lng: 144.951359}, /*(La Trobe and Spencer, Northwest corner)*/
+			{lat: -37.807569, lng: 144.970618}, /*(La Trobe and Victoria, Northeast corner 1)*/
+			{lat: -37.807861, lng: 144.971444}, /*(Spring and Victoria, Northeast corner 2)*/
+			{lat: -37.815274, lng: 144.974877}, /*(Spring and Flinders, Southeast corner)*/
+			{lat: -37.820973, lng: 144.955040} /*(Spencer and Flinders, Southwest corner)*/
+		]
+		var BALL_FREE = 0;
+		var goalOne;
+		var goalTwo;
+		var ballPosition;
+		var goalOneMarker;
+		var goalTwoMarker;
+		var ballMarker;
+		var playerMarker;
+		var playerPosition;
+		var playerWithBall = BALL_FREE;
+		var pickUpVicinity = 5;
+		
+		var socket = io();		
+		socket.on('all players update', function (players) {
+			
+		})
+		socket.on('possession change', function (player)) {
+			
+		}
+
+		function initMap() {
+			goalOne = new google.maps.LatLng(-37.817219, 144.952797); /*(Top of Southern Cross Station Staircase, Western goal)*/
+			goalTwo = new google.maps.LatLng(-37.811226, 144.973603); /*(Top of Parliament House Staircase, Eastern goal)*/
+			ballPosition = new google.maps.LatLng(-37.814278, 144.963257); /*(Elizabeth and Bourke, roughly centre of field)*/
+			text = document.getElementById('textInner');
+			map = new google.maps.Map(document.getElementById('map'), {
+				center: {lat: -37.807861, lng: 144.971444},
+				streetViewControl: false,
+				zoom: 15
+			});
+	
+			var pfControlDiv = document.createElement('div');
+			var pfControl = new PlayerFocusControl(pfControlDiv, map);
+			pfControlDiv.index = 1;
+			map.controls[google.maps.ControlPosition.TOP_CENTER].push(pfControlDiv);
+			var bfControlDiv = document.createElement('div');
+			var bfControl = new BallFocusControl(bfControlDiv, map);
+			bfControlDiv.index = 1;
+			map.controls[google.maps.ControlPosition.TOP_CENTER].push(bfControlDiv);
+	
+			// Construct the polygon representing the field of play.
+			var fieldPolygon = new google.maps.Polygon({
+				paths: fieldOfPlay,
+				strokeColor: '#FF0000',
+				strokeOpacity: 0.8,
+				strokeWeight: 2,
+				fillColor: '#00FF00',
+				fillOpacity: 0.1
+			});
+			fieldPolygon.setMap(map);
+
+			goalOneMarker = new google.maps.Marker({
+				map: map,
+				icon: {
+					path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+					fillColor: 'black',
+					fillOpacity: 0.5,
+					strokeColor: 'black',
+					strokeWeight: 0.5,
+					scale: 5
+				}
+			});
+			goalOneMarker.setPosition(goalOne);	
+			goalOneMarker.setMap(map);
+			goalTwoMarker = new google.maps.Marker({
+				map: map,
+				icon: {
+					path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+					fillColor: 'black',
+					fillOpacity: 0.5,
+					strokeColor: 'black',
+					strokeWeight: 0.5,
+					scale: 5
+				}
+			});
+			goalTwoMarker.setPosition(goalTwo);
+			ballMarker = new google.maps.Marker({
+				map: map,
+				icon: {
+					path: google.maps.SymbolPath.CIRCLE,
+					fillColor: 'white',
+					fillOpacity: 1,
+					strokeColor: 'black',
+					strokeWeight: 1,
+					scale: 10
+				}
+			});
+			getFirstInformation();
+			updateTimer = setInterval(updateInformation, 1000);
+		}
+	
+	
+		function getBearing(position1, position2) {
+			var heading = google.maps.geometry.spherical.computeHeading(position1, position2);
+			if (-22.5 < heading && heading <= 22.5) {return 'North';}
+			else if (22.5 < heading && heading <= 67.5) {return 'Northeast';}
+			else if (67.5 < heading && heading <= 112.5) {return 'East';}
+			else if (112.5 < heading && heading <= 157.5) {return 'Southeast';}
+			else if (heading > 157.5 || heading < -157.5) {return 'South';}
+			else if (-157.5 < heading && heading <= -112.5) {return 'Southwest';}
+			else if (-112.5 < heading && heading <= -67.5) {return 'West';}
+			else if (-67.5 < heading && heading <= -22.5) {return 'Northwest';}
+		
+		}
+	
+		function updateInformation() {
+			ballMarker.setPosition(ballPosition);
+			// Try HTML5 geolocation.
+			if (navigator.geolocation) {
+				navigator.geolocation.getCurrentPosition(function(position) {
+					socket.emit('player position update', position.coords.latitude, position.coords.longitude);
+					newPosition = new google.maps.LatLng(
+						position.coords.latitude, position.coords.longitude
+					);
+				
+					playerPosition = newPosition;
+					playerMarker.setPosition(playerPosition);
+				
+					// if player has entered vicinity of ball
+					if (google.maps.geometry.spherical.computeDistanceBetween(playerPosition, ballPosition) < pickUpVicinity
+						&& playerWithBall == BALL_FREE) {
+						var infoText = "You have picked up the ball!"
+						playerWithBall = 1;
+			
+				
+						console.log('player has picked up ball');
+						playerMarker.setPosition(playerPosition);
+						text.innerHTML = '<p class="header">' + infoText + '</p>';
+					} else {
+						playerPosition = newPosition;
+						console.log("Current Position: " + playerPosition.lat() + ", " + playerPosition.lng());
+						var resultColor =
+							google.maps.geometry.poly.containsLocation(playerPosition, fieldPolygon)
+							? 'blue' : 'red';
+			
+						var distancePlayerToBall = Math.floor(google.maps.geometry.spherical
+							.computeDistanceBetween(playerPosition, ballPosition));
+						var bearingPlayerToBall = getBearing(playerPosition, ballPosition);
+						var infoText = 
+							(google.maps.geometry.poly.containsLocation(playerPosition, fieldPolygon) 
+							? 'You are in bounds.' : 'You are out of bounds.')
+							+ ' The ball is ' + distancePlayerToBall + 'm ' + bearingPlayerToBall + '.';
+			
+			
+				
+						console.log('ball is ' + distancePlayerToBall + 'm away');
+						playerMarker.setPosition(playerPosition);
+						text.innerHTML = '<p class="header">' + infoText + '</p>';
+					}
+				
+				
+				
+				
+				}, function() {
+					text.innerHTML = '<p class="header">Error: The Geolocation service failed.</p>';
+					console.log("Error: The Geolocation service failed.");
+				});
+			} else {
+				// Browser doesn't support Geolocation
+				text.innerHTML = '<p class="header">Error: Your browser doesn\'t support geolocation.</p>';
+				console.log("Error: Your browser doesn\'t support geolocation.");
+			}
+		}
+	
+		function getFirstInformation() {
+			ballMarker.setPosition(ballPosition);
+			console.log('ball marker placed at ' + ballPosition.lat() + ',' + ballPosition.lng());
+			// Try HTML5 geolocation.
+			if (navigator.geolocation) {
+				navigator.geolocation.getCurrentPosition(function(position) {
+					socket.emit('player position update', position.coords.latitude, position.coords.longitude);
+					playerPosition = new google.maps.LatLng(
+						position.coords.latitude, position.coords.longitude
+					);
+					console.log("Current Position: " + playerPosition.lat() + ", " + playerPosition.lng());
+					var resultColor =
+						google.maps.geometry.poly.containsLocation(playerPosition, fieldPolygon)
+						? 'blue' : 'red';
+				
+					var distancePlayerToGoal = Math.floor(google.maps.geometry.spherical
+						.computeDistanceBetween(playerPosition, ballPosition));
+					var bearingPlayerToGoal = getBearing(playerPosition, ballPosition);
+					var infoText = 
+						(google.maps.geometry.poly.containsLocation(playerPosition, fieldPolygon)
+						? 'You are in bounds.' : 'You are out of bounds.')
+						+ ' The ball is ' + distancePlayerToGoal + 'm ' + bearingPlayerToGoal + '.';
+					console.log('infoText = ' + infoText);
+			
+			
+			
+					console.log('ball is ' + distancePlayerToGoal + 'm away');
+					playerMarker = new google.maps.Marker({
+						position: playerPosition,
+						map: map,
+						icon: {
+							path: google.maps.SymbolPath.CIRCLE,
+							fillColor: resultColor,
+							fillOpacity: 1,
+							strokeColor: 'white',
+							strokeWeight: .5,
+							scale: 10
+						}
+					});
+					console.log("marker placed");
+					text.innerHTML = '<p class="header">' + infoText + '</p>';
+					map.setCenter(playerPosition);
+				}, function() {
+					text.innerHTML = '<p class="header">Error: The Geolocation service failed.</p>';
+					console.log("Error: The Geolocation service failed.");
+				});
+			} else {
+				// Browser doesn't support Geolocation
+				text.innerHTML = '<p class="header">Error: Your browser doesn\'t support geolocation.</p>';
+				console.log("Error: Your browser doesn\'t support geolocation.");
+			}
+		}
+	
+		function PlayerFocusControl(controlDiv, map) {
+			// Set CSS for the control border.
+			var controlUI = document.createElement('div');
+			controlUI.style.backgroundColor = '#fff';
+			controlUI.style.border = '2px solid #fff';
+			controlUI.style.borderRadius = '3px';
+			controlUI.style.boxShadow = '0 2px 6px rgba(0,0,0,.3)';
+			controlUI.style.cursor = 'pointer';
+			controlUI.style.marginBottom = '22px';
+			controlUI.style.textAlign = 'center';
+			controlUI.title = 'Click to centre map back onto your location';
+			controlDiv.appendChild(controlUI);
+
+			// Set CSS for the control interior.
+			var controlText = document.createElement('div');
+			controlText.style.color = 'rgb(25,25,25)';
+			controlText.style.fontFamily = 'Roboto,Arial,sans-serif';
+			controlText.style.fontSize = '16px';
+			controlText.style.lineHeight = '38px';
+			controlText.style.paddingLeft = '5px';
+			controlText.style.paddingRight = '5px';
+			controlText.innerHTML = 'Go to Player';
+			controlUI.appendChild(controlText);
+	
+			// Setup the click event listeners: return the map to the current location of the player.
+			controlUI.addEventListener('click', function() {
+				map.setCenter(playerPosition);
+			});
+		}
+	
+		function BallFocusControl(controlDiv, map) {
+			// Set CSS for the control border.
+			var controlUI = document.createElement('div');
+			controlUI.style.backgroundColor = '#fff';
+			controlUI.style.border = '2px solid #fff';
+			controlUI.style.borderRadius = '3px';
+			controlUI.style.boxShadow = '0 2px 6px rgba(0,0,0,.3)';
+			controlUI.style.cursor = 'pointer';
+			controlUI.style.marginBottom = '22px';
+			controlUI.style.textAlign = 'center';
+			controlUI.title = 'Click to centre map onto the location of the ball';
+			controlDiv.appendChild(controlUI);
+
+			// Set CSS for the control interior.
+			var controlText = document.createElement('div');
+			controlText.style.color = 'rgb(25,25,25)';
+			controlText.style.fontFamily = 'Roboto,Arial,sans-serif';
+			controlText.style.fontSize = '16px';
+			controlText.style.lineHeight = '38px';
+			controlText.style.paddingLeft = '5px';
+			controlText.style.paddingRight = '5px';
+			controlText.innerHTML = 'Go to Ball';
+			controlUI.appendChild(controlText);
+	
+			// Setup the click event listen	ers: return the map to the current location of the player.
+			controlUI.addEventListener('click', function() {
+				map.setCenter(ballPosition);
+			});
+		}
+	
+		function CCW(p1, p2, p3) {
+			a = p1.lng(); b = p1.lat(); 
+			c = p2.lng(); d = p2.lat();
+			e = p3.lng(); f = p3.lat();
+			return (f - b) * (c - a) > (d - b) * (e - a);
+		}
+
+		function doLinesIntersect(p1, p2, p3, p4) {
+			return (CCW(p1, p3, p4) != CCW(p2, p3, p4)) && (CCW(p1, p2, p3) != CCW(p1, p2, p4));
+		}
+
+		
+	</script>
+    <script async defer
+      src="https://maps.googleapis.com/maps/api/js?v=3&key=AIzaSyCviojAiUreaFzytP1Ukq5NesS28HptNfU&callback=initMap&libraries=geometry">
+    </script>
+  </body>
+</html>
